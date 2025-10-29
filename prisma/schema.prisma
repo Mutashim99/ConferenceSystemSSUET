@@ -1,0 +1,120 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id          Int       @id @default(autoincrement())
+  firstName   String
+  middleName  String?
+  lastName    String
+  affiliation String?
+  email       String    @unique
+  password    String
+  role        Role      @default(AUTHOR)
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  papers      Paper[]   @relation("AuthorPapers")
+  reviews     Review[]  @relation("ReviewerReviews")
+  feedbacks   Feedback[]
+  assignments ReviewerAssignment[]
+}
+
+enum Role {
+  ADMIN
+  AUTHOR
+  REVIEWER
+}
+
+model Paper {
+  id            Int            @id @default(autoincrement())
+  title         String
+  abstract      String
+  fileUrl       String
+  keywords      String?
+  topicArea     String?
+  status        PaperStatus    @default(PENDING_APPROVAL)
+  submittedAt   DateTime       @default(now())
+
+  authorId      Int
+  author        User           @relation("AuthorPapers", fields: [authorId], references: [id])
+  
+  // relations
+  coAuthors     CoAuthor[]
+  reviews       Review[]
+  feedbacks     Feedback[]
+  assignments   ReviewerAssignment[]
+}
+
+enum PaperStatus {
+  PENDING_APPROVAL      // submitted, waiting for admin approval
+  PENDING_REVIEW        // approved by admin but not yet reviewed
+  UNDER_REVIEW          // assigned to reviewers
+  REVISION_REQUIRED     // reviewer requested changes
+  ACCEPTED
+  REJECTED
+}
+
+model CoAuthor {
+  id        Int     @id @default(autoincrement())
+  paperId   Int
+  name      String
+  email     String?
+  affiliation String?
+
+  paper     Paper   @relation(fields: [paperId], references: [id])
+}
+model ReviewerAssignment {
+  id          Int      @id @default(autoincrement())
+  reviewerId  Int
+  paperId     Int
+
+  reviewer    User     @relation(fields: [reviewerId], references: [id])
+  paper       Paper    @relation(fields: [paperId], references: [id])
+
+  assignedAt  DateTime @default(now())
+
+  @@unique([reviewerId, paperId])
+}
+model Review {
+  id             Int       @id @default(autoincrement())
+  paperId        Int
+  reviewerId     Int
+  comments       String
+  rating         Int
+  recommendation ReviewDecision
+  reviewedAt     DateTime  @default(now())
+
+  paper          Paper     @relation(fields: [paperId], references: [id])
+  reviewer       User      @relation("ReviewerReviews", fields: [reviewerId], references: [id])
+  @@unique([paperId, reviewerId])
+}
+
+enum ReviewDecision {
+  ACCEPT
+  REJECT
+  MINOR_REVISION
+  MAJOR_REVISION
+}
+model Feedback {
+  id         Int       @id @default(autoincrement())
+  paperId    Int
+  senderId   Int
+  message    String
+  sentAt     DateTime  @default(now())
+
+  paper      Paper     @relation(fields: [paperId], references: [id])
+  sender     User      @relation(fields: [senderId], references: [id])
+}
