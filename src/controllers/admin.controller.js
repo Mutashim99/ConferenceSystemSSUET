@@ -1,7 +1,6 @@
 import prisma from '../libs/prisma.js';
-import { hashPassword } from '../utils/auth.js';
 import { validationResult } from 'express-validator';
-import { randomBytes } from 'crypto';
+import bcrypt from 'bcrypt';
 import { sendEmail } from '../utils/mail.js';
 import { v2 as cloudinary } from 'cloudinary';
 
@@ -13,11 +12,10 @@ cloudinary.config({
 });
 
 /**
- * Register a new REVIEWER (by Admin).
+ * Register a new user with the REVIEWER role.
  * @route POST /api/admin/register-reviewer
  */
 export const registerReviewer = async (req, res) => {
-  // 1. Validate request body
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -26,18 +24,19 @@ export const registerReviewer = async (req, res) => {
   const { firstName, middleName, lastName, affiliation, email } = req.body;
 
   try {
-    // 2. Check if user already exists
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User already exists with this email' });
+    // Check if user already exists
+    let user = await prisma.user.findUnique({ where: { email } });
+    if (user) {
+      return res.status(400).json({ message: 'User with this email already exists' });
     }
 
-    // 3. Generate a temporary random password
-    const tempPassword = randomBytes(8).toString('hex');
-    const hashedPassword = await hashPassword(tempPassword);
+    // Generate a random password (e.g., 8 characters)
+    const tempPassword = Math.random().toString(36).slice(-8);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(tempPassword, salt);
 
-    // 4. Create the new user with REVIEWER role
-    const user = await prisma.user.create({
+    // Create the new reviewer user
+    user = await prisma.user.create({
       data: {
         firstName,
         middleName,
@@ -47,45 +46,43 @@ export const registerReviewer = async (req, res) => {
         password: hashedPassword,
         role: 'REVIEWER',
       },
-      select: { // Select data to return (exclude password)
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
+    });
+
+    // Send email to the new reviewer
+    const mailSubject = 'You are invited as a Reviewer';
+    const mailText = `
+      Hello ${firstName},
+      
+      You have been registered as a reviewer for our conference system.
+      You can log in using the following credentials:
+      
+      Email: ${email}
+      Password: ${tempPassword}
+      
+      Please change your password after your first login.
+      
+      Best regards,
+      Conference Admin Team
+    `;
+
+    await sendEmail(email, mailSubject, mailText);
+
+    res.status(201).json({
+      message: 'Reviewer registered successfully. Credentials sent via email.',
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
       },
     });
-
-    // 5. Send registration email with credentials
-    const loginUrl = 'http://localhost:3000/login'; // Your frontend login URL
-    await sendEmail({
-      to: user.email,
-      subject: 'You have been registered as a reviewer',
-      text: `Hello ${user.firstName},\n\nYou have been registered as a reviewer for our conference.\n\nYour login credentials are:\nEmail: ${user.email}\nPassword: ${tempPassword}\n\nPlease login at: ${loginUrl}\n\nThank you!`,
-      html: `<p>Hello ${user.firstName},</p>
-             <p>You have been registered as a reviewer for our conference.</p>
-             <p>Your login credentials are:</p>
-             <ul>
-               <li>Email: ${user.email}</li>
-               <li>Password: <strong>${tempPassword}</strong></li>
-             </ul>
-             <p>Please <a href="${loginUrl}">login here</a> to access your dashboard.</p>
-             <p>Thank you!</p>`,
-    });
-
-    // 6. Send response
-    res.status(201).json({
-      message: 'Reviewer registered successfully. An email has been sent with credentials.',
-      user,
-    });
   } catch (error) {
-    console.error('Reviewer registration error:', error);
-    res.status(500).json({ message: 'Server error during reviewer registration' });
+    console.error('Error registering reviewer:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
 /**
- * Get all submitted papers.
+ * Get all papers (for admin dashboard).
  * @route GET /api/admin/papers
  */
 export const getAllPapers = async (req, res) => {
@@ -94,26 +91,30 @@ export const getAllPapers = async (req, res) => {
       include: {
         author: {
           select: {
+            id: true,
             firstName: true,
             lastName: true,
             email: true,
           },
         },
-        coAuthors: true,
+        _count: {
+          select: { reviews: true, assignments: true },
+        },
       },
       orderBy: {
         submittedAt: 'desc',
       },
     });
+
     res.status(200).json(papers);
   } catch (error) {
     console.error('Error fetching all papers:', error);
-    res.status(500).json({ message: 'Server error fetching papers' });
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
 /**
- * Get a single paper by ID (for details).
+ * Get a single paper by ID (for admin).
  * @route GET /api/admin/papers/:id
  */
 export const getPaperById = async (req, res) => {
@@ -125,6 +126,7 @@ export const getPaperById = async (req, res) => {
       include: {
         author: {
           select: {
+            id: true,
             firstName: true,
             lastName: true,
             email: true,
@@ -132,7 +134,8 @@ export const getPaperById = async (req, res) => {
           },
         },
         coAuthors: true,
-        assignments: {
+        // Include reviews and the reviewer's info
+        reviews: {
           include: {
             reviewer: {
               select: {
@@ -144,7 +147,33 @@ export const getPaperById = async (req, res) => {
             },
           },
         },
-        reviews: true,
+        // Include the full feedback thread
+        feedbacks: {
+          include: {
+            sender: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+              },
+            },
+          },
+          orderBy: {
+            sentAt: 'asc',
+          },
+        },
+        assignments: {
+          include: {
+            reviewer: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -154,7 +183,7 @@ export const getPaperById = async (req, res) => {
 
     res.status(200).json(paper);
   } catch (error) {
-    console.error('Error fetching paper by ID:', error);
+    console.error('Error fetching paper details:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -167,40 +196,39 @@ export const deletePaper = async (req, res) => {
   const { id } = req.params;
 
   try {
-    // 1. Find the paper to get its fileUrl
     const paper = await prisma.paper.findUnique({
       where: { id: parseInt(id) },
-      select: { fileUrl: true },
     });
 
     if (!paper) {
       return res.status(404).json({ message: 'Paper not found' });
     }
 
-    // 2. Delete the file from Cloudinary
+    // 1. Delete the file from Cloudinary
     if (paper.fileUrl) {
       try {
-        // Extract public_id from the URL
-        // Example URL: http://res.cloudinary.com/cloud_name/raw/upload/v12345/folder/file-123.pdf
         const urlParts = paper.fileUrl.split('/');
-        // The public_id is 'folder/file-123'
         const publicId = urlParts.slice(urlParts.indexOf('conference_papers')).join('/').split('.')[0];
-        
-        await cloudinary.uploader.destroy(publicId, {
-          resource_type: 'raw',
-        });
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
       } catch (cloudinaryError) {
         console.warn('Could not delete file from Cloudinary:', cloudinaryError.message);
-        // We'll proceed with deleting from the DB anyway.
+        // We don't stop the process, just log a warning.
       }
     }
 
-    // 3. Delete the paper from the database (this will cascade)
-    // Deleting the paper will also delete related CoAuthors, Reviews, Feedbacks, and Assignments
-    // because of the relations defined in your schema.
-    await prisma.paper.delete({
-      where: { id: parseInt(id) },
-    });
+    // 2. Delete the paper from the database
+    // Prisma cascading delete (if set up) should handle related reviews, assignments, etc.
+    // If not, you must delete related records manually in a transaction.
+    // Assuming `onDelete: Cascade` is set or you handle it.
+    // Let's do it manually just in case, in a transaction.
+    
+    await prisma.$transaction([
+      prisma.feedback.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.review.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.reviewerAssignment.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.coAuthor.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.paper.delete({ where: { id: parseInt(id) } }),
+    ]);
 
     res.status(200).json({ message: 'Paper deleted successfully' });
   } catch (error) {
@@ -243,6 +271,46 @@ export const approvePaper = async (req, res) => {
   }
 };
 
+/**
+ * Update a paper's final status.
+ * @route PATCH /api/admin/papers/:id/status
+ */
+export const updatePaperStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  // Validate the status
+  const allowedStatuses = ['ACCEPTED', 'REJECTED', 'REVISION_REQUIRED'];
+  if (!status || !allowedStatuses.includes(status)) {
+    return res.status(400).json({ message: 'Invalid or missing status. Must be one of: ACCEPTED, REJECTED, REVISION_REQUIRED' });
+  }
+
+  try {
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(id) },
+    });
+
+    if (!paper) {
+      return res.status(404).json({ message: 'Paper not found' });
+    }
+
+    const updatedPaper = await prisma.paper.update({
+      where: { id: parseInt(id) },
+      data: {
+        status: status,
+      },
+    });
+
+    // TODO: Notify author via email about the decision
+    // (We can add this later, but the status update is done)
+
+    res.status(200).json({ message: `Paper status updated to ${status}`, paper: updatedPaper });
+  } catch (error) {
+    console.error('Error updating paper status:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 
 /**
  * Get all users with the REVIEWER role.
@@ -260,9 +328,9 @@ export const getAllReviewers = async (req, res) => {
         lastName: true,
         email: true,
         affiliation: true,
-      },
-      orderBy: {
-        lastName: 'asc',
+        _count: {
+          select: { assignments: true, reviews: true },
+        },
       },
     });
     res.status(200).json(reviewers);
@@ -285,59 +353,61 @@ export const assignReviewersToPaper = async (req, res) => {
   }
 
   try {
-    const paperIdInt = parseInt(id);
-
-    // 1. Prepare data for ReviewerAssignment
-    const assignmentData = reviewerIds.map((reviewerId) => ({
-      paperId: paperIdInt,
-      reviewerId: reviewerId,
-    }));
-
-    // 2. Create the assignments
-    // 'skipDuplicates: true' will ignore any assignments that already exist
-    await prisma.reviewerAssignment.createMany({
-      data: assignmentData,
-      skipDuplicates: true,
-    });
-
-    // 3. Update the paper status to UNDER_REVIEW
-    await prisma.paper.update({
-      where: { id: paperIdInt },
-      data: {
-        status: 'UNDER_REVIEW',
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(id) },
+      include: {
+        author: true, // Need author's email for notification
       },
     });
 
-    // 4. (Optional but recommended) Send emails to assigned reviewers
+    if (!paper) {
+      return res.status(404).json({ message: 'Paper not found' });
+    }
+
+    // 1. Create the assignments in the database
+    const assignments = reviewerIds.map((reviewerId) => ({
+      paperId: parseInt(id),
+      reviewerId: reviewerId,
+    }));
+
+    await prisma.reviewerAssignment.createMany({
+      data: assignments,
+      skipDuplicates: true, // Don't crash if an assignment already exists
+    });
+
+    // 2. Update paper status
+    if (paper.status === 'PENDING_REVIEW') {
+      await prisma.paper.update({
+        where: { id: parseInt(id) },
+        data: { status: 'UNDER_REVIEW' },
+      });
+    }
+
+    // 3. Send emails to the assigned reviewers (async, don't block response)
     const reviewers = await prisma.user.findMany({
       where: {
         id: { in: reviewerIds },
       },
     });
 
-    const paper = await prisma.paper.findUnique({ where: { id: paperIdInt }, select: { title: true }});
-
     for (const reviewer of reviewers) {
-      const dashboardUrl = 'http://localhost:3000/reviewer/dashboard'; // Your frontend URL
-      await sendEmail({
-        to: reviewer.email,
-        subject: 'New Paper Assigned for Review',
-        text: `Hello ${reviewer.firstName},\n\nA new paper, "${paper.title}", has been assigned to you for review.\n\nPlease login to your dashboard to view the paper and submit your review: ${dashboardUrl}\n\nThank you!`,
-        html: `<p>Hello ${reviewer.firstName},</p>
-               <p>A new paper, "<strong>${paper.title}</strong>", has been assigned to you for review.</p>
-               <p>Please <a href="${dashboardUrl}">login to your dashboard</a> to view the paper and submit your review.</p>
-               <p>Thank you!</p>`,
-      });
+      const mailSubject = 'New Paper Assignment for Review';
+      const mailText = `
+        Hello ${reviewer.firstName},
+        
+        You have been assigned to review a new paper titled: "${paper.title}".
+        Please log in to your reviewer dashboard to view the paper and submit your review.
+        
+        Best regards,
+        Conference Admin Team
+      `;
+      sendEmail(reviewer.email, mailSubject, mailText).catch(console.error);
     }
 
-    res.status(201).json({ message: 'Reviewers assigned successfully' });
+    res.status(200).json({ message: 'Reviewers assigned successfully' });
   } catch (error) {
     console.error('Error assigning reviewers:', error);
-    if (error.code === 'P2003') { // Foreign key constraint failed
-      return res.status(404).json({ message: 'One or more reviewers or the paper do not exist.' });
-    }
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 

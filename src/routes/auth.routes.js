@@ -5,6 +5,7 @@ import {
   loginUser,
   logoutUser,
   getMyProfile,
+  getMe
 } from '../controllers/auth.controller.js';
 import { protect } from '../middlewares/auth.middleware.js';
 
@@ -47,4 +48,6 @@ router.post('/logout', logoutUser);
 // @access  Private
 router.get('/me', protect, getMyProfile);
 
+// GET /api/auth/me (To check if user is logged in)
+router.get('/me', protect, getMe);
 export default router;

@@ -138,3 +138,13 @@ export const getMyProfile = async (req, res) => {
   // req.user contains the safe user object (without password)
   res.status(200).json(req.user);
 };
+
+/**
+ * @desc    Get the logged in user's data
+ * @route   GET /api/auth/me
+ * @access  Private
+ */
+export const getMe = (req, res) => {
+  // req.user is attached by the 'protect' middleware
+  res.status(200).json(req.user);
+};

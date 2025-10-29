@@ -1,40 +1,62 @@
-import { Router } from "express";
-import { body } from "express-validator";
-import { protect, isAuthor } from "../middlewares/auth.middleware.js";
-import upload from "../utils/cloudinary.js";
+import { Router } from 'express';
+import { body } from 'express-validator';
+import { protect, isAuthor } from '../middlewares/auth.middleware.js';
 import {
   submitPaper,
-  getMySubmittedPapers,
-} from "../controllers/author.controller.js";
+  getSubmittedPapers, // <-- Fix: Was 'getMySubmittedPapers'
+  getAuthorPaperById, // New
+  submitFeedback,     // New
+  resubmitPaper,      // New
+} from '../controllers/author.controller.js';
+import  upload  from '../utils/cloudinary.js';
 
 const router = Router();
 
-// @route   POST /api/author/submit-paper
-// @desc    Submit a new conference paper
+// Apply 'protect' and 'isAuthor' middleware to all routes in this file
+router.use(protect, isAuthor);
+
+// @route   POST /api/author/papers/submit
+// @desc    Submit a new paper
 // @access  Private (Author only)
 router.post(
-  "/submit-paper",
+  '/papers/submit',
+  upload.single('paper'), // 'paper' is the field name for the file
   [
-    protect,
-    isAuthor,
-    // This 'upload.single' middleware handles the file upload to Cloudinary
-    // It must come before the validation checks for req.body
-    upload.single("paperFile"), // 'paperFile' is the name of the form field
-    // Validation for text fields
-    body("title", "Title is required").not().isEmpty(),
-    body("abstract", "Abstract is required").not().isEmpty(),
-    // Optional fields can be checked with .optional()
-    body("coAuthors")
-      .optional()
-      .isArray()
-      .withMessage("Co-authors must be an array of objects"),
+    body('title', 'Title is required').not().isEmpty(),
+    body('abstract', 'Abstract is required').not().isEmpty(),
+    // Add more validation as needed
   ],
   submitPaper
 );
 
-// @route   GET /api/author/my-papers
-// @desc    Get all papers submitted by the current author
+// @route   GET /api/author/papers
+// @desc    Get all papers for the logged-in author
 // @access  Private (Author only)
-router.get("/my-papers", [protect, isAuthor], getMySubmittedPapers);
+router.get('/papers', getSubmittedPapers);
+
+// @route   GET /api/author/papers/:paperId
+// @desc    Get details for a single paper (to see reviews/feedback)
+// @access  Private (Author only)
+router.get('/papers/:paperId', getAuthorPaperById);
+
+// @route   POST /api/author/papers/:paperId/feedback
+// @desc    Post a feedback message (part of the conversation)
+// @access  Private (Author only)
+router.post(
+  '/papers/:paperId/feedback',
+  [body('message', 'Message cannot be empty').not().isEmpty()],
+  submitFeedback
+);
+
+// @route   POST /api/author/papers/:paperId/resubmit
+// @desc    Resubmit a paper with revisions (uploads new file)
+// @access  Private (Author only)
+router.post(
+  '/papers/:paperId/resubmit',
+  upload.single('paper'), // Use multer for the new file upload
+  resubmitPaper
+);
 
 export default router;
+
+
