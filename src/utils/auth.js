@@ -58,8 +58,8 @@ export const verifyToken = (token) => {
 export const setTokenCookie = (res, token) => {
   res.cookie("token", token, {
     httpOnly: true,
-    secure: false, // Use 'true' in production
-    sameSite: "none",
+    secure: true, // MUST be true for cross-domain
+    sameSite: "none", // MUST be 'none' for cross-domain
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 };

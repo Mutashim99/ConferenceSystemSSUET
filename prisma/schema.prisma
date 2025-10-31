@@ -63,6 +63,7 @@ enum PaperStatus {
   PENDING_REVIEW        // approved by admin but not yet reviewed
   UNDER_REVIEW          // assigned to reviewers
   REVISION_REQUIRED     // reviewer requested changes
+  RESUBMITTED
   ACCEPTED
   REJECTED
 }

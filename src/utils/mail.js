@@ -33,6 +33,7 @@ const createTransporter = () => {
  */
 export const sendEmail = async ({ to, subject, text, html }) => {
   try {
+    console.log(to);
     const transporter = createTransporter();
 
     if (!transporter) {

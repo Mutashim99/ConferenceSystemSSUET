@@ -16,13 +16,7 @@ const router = Router();
 // @access  Public
 router.post(
   '/register',
-  [
-    // Validation middleware
-    body('email', 'Please include a valid email').isEmail(),
-    body('password', 'Password must be 6 or more characters').isLength({ min: 6 }),
-    body('firstName', 'First name is required').not().isEmpty(),
-    body('lastName', 'Last name is required').not().isEmpty(),
-  ],
+
   registerAuthor
 );
 

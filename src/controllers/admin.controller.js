@@ -1,8 +1,8 @@
-import prisma from '../libs/prisma.js';
-import { validationResult } from 'express-validator';
-import bcrypt from 'bcrypt';
-import { sendEmail } from '../utils/mail.js';
-import { v2 as cloudinary } from 'cloudinary';
+import prisma from "../libs/prisma.js";
+import { validationResult } from "express-validator";
+import bcrypt from "bcrypt";
+import { sendEmail } from "../utils/mail.js";
+import { v2 as cloudinary } from "cloudinary";
 
 // Configure Cloudinary (needed for deleting files)
 cloudinary.config({
@@ -27,7 +27,9 @@ export const registerReviewer = async (req, res) => {
     // Check if user already exists
     let user = await prisma.user.findUnique({ where: { email } });
     if (user) {
-      return res.status(400).json({ message: 'User with this email already exists' });
+      return res
+        .status(400)
+        .json({ message: "User with this email already exists" });
     }
 
     // Generate a random password (e.g., 8 characters)
@@ -44,12 +46,12 @@ export const registerReviewer = async (req, res) => {
         affiliation,
         email,
         password: hashedPassword,
-        role: 'REVIEWER',
+        role: "REVIEWER",
       },
     });
 
     // Send email to the new reviewer
-    const mailSubject = 'You are invited as a Reviewer';
+    const mailSubject = "You are invited as a Reviewer";
     const mailText = `
       Hello ${firstName},
       
@@ -65,10 +67,14 @@ export const registerReviewer = async (req, res) => {
       Conference Admin Team
     `;
 
-    await sendEmail(email, mailSubject, mailText);
+    await sendEmail({
+      to: email,
+      subject: mailSubject,
+      text: mailText,
+    });
 
     res.status(201).json({
-      message: 'Reviewer registered successfully. Credentials sent via email.',
+      message: "Reviewer registered successfully. Credentials sent via email.",
       user: {
         id: user.id,
         email: user.email,
@@ -76,8 +82,8 @@ export const registerReviewer = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Error registering reviewer:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error registering reviewer:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -102,14 +108,14 @@ export const getAllPapers = async (req, res) => {
         },
       },
       orderBy: {
-        submittedAt: 'desc',
+        submittedAt: "desc",
       },
     });
 
     res.status(200).json(papers);
   } catch (error) {
-    console.error('Error fetching all papers:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching all papers:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -160,7 +166,7 @@ export const getPaperById = async (req, res) => {
             },
           },
           orderBy: {
-            sentAt: 'asc',
+            sentAt: "asc",
           },
         },
         assignments: {
@@ -178,13 +184,13 @@ export const getPaperById = async (req, res) => {
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found' });
+      return res.status(404).json({ message: "Paper not found" });
     }
 
     res.status(200).json(paper);
   } catch (error) {
-    console.error('Error fetching paper details:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching paper details:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -201,17 +207,23 @@ export const deletePaper = async (req, res) => {
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found' });
+      return res.status(404).json({ message: "Paper not found" });
     }
 
     // 1. Delete the file from Cloudinary
     if (paper.fileUrl) {
       try {
-        const urlParts = paper.fileUrl.split('/');
-        const publicId = urlParts.slice(urlParts.indexOf('conference_papers')).join('/').split('.')[0];
-        await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+        const urlParts = paper.fileUrl.split("/");
+        const publicId = urlParts
+          .slice(urlParts.indexOf("conference_papers"))
+          .join("/")
+          .split(".")[0];
+        await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
       } catch (cloudinaryError) {
-        console.warn('Could not delete file from Cloudinary:', cloudinaryError.message);
+        console.warn(
+          "Could not delete file from Cloudinary:",
+          cloudinaryError.message
+        );
         // We don't stop the process, just log a warning.
       }
     }
@@ -221,19 +233,21 @@ export const deletePaper = async (req, res) => {
     // If not, you must delete related records manually in a transaction.
     // Assuming `onDelete: Cascade` is set or you handle it.
     // Let's do it manually just in case, in a transaction.
-    
+
     await prisma.$transaction([
       prisma.feedback.deleteMany({ where: { paperId: parseInt(id) } }),
       prisma.review.deleteMany({ where: { paperId: parseInt(id) } }),
-      prisma.reviewerAssignment.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.reviewerAssignment.deleteMany({
+        where: { paperId: parseInt(id) },
+      }),
       prisma.coAuthor.deleteMany({ where: { paperId: parseInt(id) } }),
       prisma.paper.delete({ where: { id: parseInt(id) } }),
     ]);
 
-    res.status(200).json({ message: 'Paper deleted successfully' });
+    res.status(200).json({ message: "Paper deleted successfully" });
   } catch (error) {
-    console.error('Error deleting paper:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error deleting paper:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -250,24 +264,28 @@ export const approvePaper = async (req, res) => {
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found' });
+      return res.status(404).json({ message: "Paper not found" });
     }
 
-    if (paper.status !== 'PENDING_APPROVAL') {
-      return res.status(400).json({ message: `Paper is already ${paper.status} and cannot be approved.` });
+    if (paper.status !== "PENDING_APPROVAL") {
+      return res.status(400).json({
+        message: `Paper is already ${paper.status} and cannot be approved.`,
+      });
     }
 
     const updatedPaper = await prisma.paper.update({
       where: { id: parseInt(id) },
       data: {
-        status: 'PENDING_REVIEW',
+        status: "PENDING_REVIEW",
       },
     });
 
-    res.status(200).json({ message: 'Paper approved successfully', paper: updatedPaper });
+    res
+      .status(200)
+      .json({ message: "Paper approved successfully", paper: updatedPaper });
   } catch (error) {
-    console.error('Error approving paper:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error approving paper:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -280,9 +298,12 @@ export const updatePaperStatus = async (req, res) => {
   const { status } = req.body;
 
   // Validate the status
-  const allowedStatuses = ['ACCEPTED', 'REJECTED', 'REVISION_REQUIRED'];
+  const allowedStatuses = ["ACCEPTED", "REJECTED", "REVISION_REQUIRED"];
   if (!status || !allowedStatuses.includes(status)) {
-    return res.status(400).json({ message: 'Invalid or missing status. Must be one of: ACCEPTED, REJECTED, REVISION_REQUIRED' });
+    return res.status(400).json({
+      message:
+        "Invalid or missing status. Must be one of: ACCEPTED, REJECTED, REVISION_REQUIRED",
+    });
   }
 
   try {
@@ -291,7 +312,7 @@ export const updatePaperStatus = async (req, res) => {
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found' });
+      return res.status(404).json({ message: "Paper not found" });
     }
 
     const updatedPaper = await prisma.paper.update({
@@ -304,13 +325,15 @@ export const updatePaperStatus = async (req, res) => {
     // TODO: Notify author via email about the decision
     // (We can add this later, but the status update is done)
 
-    res.status(200).json({ message: `Paper status updated to ${status}`, paper: updatedPaper });
+    res.status(200).json({
+      message: `Paper status updated to ${status}`,
+      paper: updatedPaper,
+    });
   } catch (error) {
-    console.error('Error updating paper status:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error updating paper status:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
-
 
 /**
  * Get all users with the REVIEWER role.
@@ -320,7 +343,7 @@ export const getAllReviewers = async (req, res) => {
   try {
     const reviewers = await prisma.user.findMany({
       where: {
-        role: 'REVIEWER',
+        role: "REVIEWER",
       },
       select: {
         id: true,
@@ -335,8 +358,8 @@ export const getAllReviewers = async (req, res) => {
     });
     res.status(200).json(reviewers);
   } catch (error) {
-    console.error('Error fetching reviewers:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching reviewers:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -349,7 +372,9 @@ export const assignReviewersToPaper = async (req, res) => {
   const { reviewerIds } = req.body; // Expect an array of reviewer IDs: [1, 2, 3]
 
   if (!reviewerIds || !Array.isArray(reviewerIds) || reviewerIds.length === 0) {
-    return res.status(400).json({ message: 'Reviewer IDs must be a non-empty array' });
+    return res
+      .status(400)
+      .json({ message: "Reviewer IDs must be a non-empty array" });
   }
 
   try {
@@ -361,7 +386,7 @@ export const assignReviewersToPaper = async (req, res) => {
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found' });
+      return res.status(404).json({ message: "Paper not found" });
     }
 
     // 1. Create the assignments in the database
@@ -376,10 +401,10 @@ export const assignReviewersToPaper = async (req, res) => {
     });
 
     // 2. Update paper status
-    if (paper.status === 'PENDING_REVIEW') {
+    if (paper.status === "PENDING_REVIEW") {
       await prisma.paper.update({
         where: { id: parseInt(id) },
-        data: { status: 'UNDER_REVIEW' },
+        data: { status: "UNDER_REVIEW" },
       });
     }
 
@@ -391,7 +416,7 @@ export const assignReviewersToPaper = async (req, res) => {
     });
 
     for (const reviewer of reviewers) {
-      const mailSubject = 'New Paper Assignment for Review';
+      const mailSubject = "New Paper Assignment for Review";
       const mailText = `
         Hello ${reviewer.firstName},
         
@@ -401,13 +426,16 @@ export const assignReviewersToPaper = async (req, res) => {
         Best regards,
         Conference Admin Team
       `;
-      sendEmail(reviewer.email, mailSubject, mailText).catch(console.error);
+      sendEmail({
+        to: reviewer.email,
+        subject: mailSubject,
+        text: mailText,
+      }).catch(console.error);
     }
 
-    res.status(200).json({ message: 'Reviewers assigned successfully' });
+    res.status(200).json({ message: "Reviewers assigned successfully" });
   } catch (error) {
-    console.error('Error assigning reviewers:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error assigning reviewers:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
-

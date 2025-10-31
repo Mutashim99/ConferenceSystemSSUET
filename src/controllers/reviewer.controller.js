@@ -91,6 +91,7 @@ export const getAssignedPaperById = async (req, res) => {
             rating: true,
             recommendation: true,
             reviewedAt: true,
+            reviewerId:true
           },
         },
         // Get the full feedback/conversation thread

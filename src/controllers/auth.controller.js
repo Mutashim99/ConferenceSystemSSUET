@@ -26,6 +26,7 @@ export const registerAuthor = async (req, res) => {
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
+    
 
     // 3. Hash the password
     const hashedPassword = await hashPassword(password);
@@ -119,16 +120,15 @@ export const loginUser = async (req, res) => {
  * @route POST /api/auth/logout
  */
 export const logoutUser = (req, res) => {
-  // Clear the cookie by setting an empty token and new expiry date
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.cookie('token', '', {
     httpOnly: true,
-    secure: false,
-    sameSite: 'none',
-    expires: new Date(0), // Set to a past date
+    secure: true, // MUST match the login cookie
+    sameSite: 'none', // MUST match the login cookie
+    expires: new Date(0), 
   });
   res.status(200).json({ message: 'Logged out successfully' });
 };
-
 /**
  * Get the currently authenticated user's profile.
  * @route GET /api/auth/me
