@@ -15,10 +15,12 @@ const app = express();
 
 // --- Middleware ---
 // CORS setup to allow credentials (cookies)
-app.use(cors({
-  origin: 'http://localhost:5173', // Your frontend URL
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: "https://conferencesystem.vercel.app",
+    credentials: true,
+  })
+);
 
 // Standard middleware
 app.use(express.json()); // To parse JSON request bodies
