@@ -30,7 +30,6 @@ router.post(
   '/papers/:paperId/review',
   [
     body('comments', 'Comments are required').not().isEmpty(),
-    body('rating', 'Rating must be a number between 1 and 5').isInt({ min: 1, max: 5 }),
     body('recommendation', 'A valid recommendation is required').isIn([
       'ACCEPT',
       'REJECT',

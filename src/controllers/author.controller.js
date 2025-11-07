@@ -16,6 +16,13 @@ cloudinary.config({
  * @route POST /api/author/papers/submit
  */
 export const submitPaper = async (req, res) => {
+  // --- FIX #1: Added logging to find the *original* error ---
+  console.log("--- SUBMIT PAPER CONTROLLER HIT ---");
+  console.log("req.user (should be populated):", req.user);
+  console.log("req.file (should be populated):", req.file);
+  console.log("req.body (should have all fields):", req.body);
+  // --- END LOGGING ---
+
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -196,15 +203,32 @@ export const submitPaper = async (req, res) => {
       .status(201)
       .json({ message: "Paper submitted successfully", paper: newPaper });
   } catch (error) {
-    console.error("Error submitting paper:", error);
+    // --- FIX #2: The error handling block is now safe ---
+    console.error("--- ORIGINAL ERROR (from prisma.create) ---:", error);
+
+    // Try to delete the file from Cloudinary, but don't crash if it fails
     if (req.file) {
-      const publicId = `conference_papers/${req.file.filename.split(".")[0]}`;
-      await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
+      try {
+        // `req.file.filename` *is* the public_id (e.g., "conference_papers/my-file-123")
+        // No need to build the path manually.
+        const publicId = req.file.filename;
+        console.log(`Attempting to delete orphaned file: ${publicId}`);
+        await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
+      } catch (cleanupError) {
+        console.error("--- CLEANUP FAILED ---");
+        console.error(
+          `Failed to delete file ${req.file.filename} from Cloudinary:`,
+          cleanupError
+        );
+      }
     }
-    res.status(500).json({ message: "Server error" });
+
+    // Send the *original* error message to the client
+    res
+      .status(500)
+      .json({ message: "Server error", details: error.message });
   }
 };
-
 /**
  * Get all papers submitted by the logged-in author.
  * @route GET /api/author/papers
@@ -348,7 +372,9 @@ export const submitFeedback = async (req, res) => {
     if (!paper) {
       return res
         .status(403)
-        .json({ message: "You do not have permission to comment on this paper." });
+        .json({
+          message: "You do not have permission to comment on this paper.",
+        });
     }
 
     // 2. Create the feedback message
@@ -376,7 +402,9 @@ export const resubmitPaper = async (req, res) => {
   const authorId = req.user.id;
 
   if (!req.file) {
-    return res.status(400).json({ message: "A revised paper file is required" });
+    return res
+      .status(400)
+      .json({ message: "A revised paper file is required" });
   }
 
   try {
@@ -502,8 +530,8 @@ export const resubmitPaper = async (req, res) => {
               Hello ${assignment.reviewer.firstName || "Reviewer"},
               
               A paper you previously reviewed, "${updatedPaper.title}" (ID: ${
-            updatedPaper.id
-          }), has been resubmitted by the author after revisions.
+              updatedPaper.id
+            }), has been resubmitted by the author after revisions.
               
               It is now ready for your review again.
               

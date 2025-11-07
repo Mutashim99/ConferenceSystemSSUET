@@ -1,6 +1,6 @@
 import prisma from "../libs/prisma.js";
 import { validationResult } from "express-validator";
-import { sendEmail } from "../utils/mail.js"; // <-- NEW: Added email utility
+import { sendEmail } from "../utils/mail.js"; // <-- Make sure this is imported
 
 /**
  * Get all papers assigned to the logged-in reviewer.
@@ -83,12 +83,13 @@ export const getAssignedPaperById = async (req, res) => {
             affiliation: true,
           },
         },
-        authors: true, // Updated from coAuthors
+        authors: true, // <-- CHANGED: from coAuthors
         // Get all reviews, but hide who wrote them (blind review)
         reviews: {
           select: {
             id: true,
             comments: true,
+            // rating: false, // <-- REMOVED
             recommendation: true,
             reviewedAt: true,
             reviewerId: true,
@@ -138,7 +139,7 @@ export const submitReview = async (req, res) => {
 
   const reviewerId = req.user.id;
   const { paperId } = req.params;
-  const { comments, recommendation } = req.body; // 'rating' was removed
+  const { comments, recommendation } = req.body; // <-- REMOVED: rating
 
   try {
     // 1. Check if reviewer is actually assigned to this paper
@@ -170,64 +171,77 @@ export const submitReview = async (req, res) => {
         paperId: parseInt(paperId),
         reviewerId: reviewerId,
         comments,
+        // rating: parseInt(rating), // <-- REMOVED
         recommendation, // e.g., 'ACCEPT', 'REJECT', etc.
       },
       // What to update if it does exist
       update: {
         comments,
+        // rating: parseInt(rating), // <-- REMOVED
         recommendation,
         reviewedAt: new Date(), // Update the timestamp
       },
     });
 
-    // <-- NEW: Send blind review notification to corresponding authors
-    const paper = await prisma.paper.findUnique({
-      where: { id: parseInt(paperId) },
-      select: { title: true },
-    });
-
-    const correspondingAuthors = await prisma.author.findMany({
-      where: {
-        paperId: parseInt(paperId),
-        isCorresponding: true,
-        email: { not: null },
-      },
-    });
-
-    for (const author of correspondingAuthors) {
-      sendEmail({
-        to: author.email,
-        subject: `[Review Submitted] A new review is available for "${paper.title}"`,
-        text: `
-          Hello ${author.salutation || ""} ${author.name},
-          
-          A new (blind) review has been submitted for your paper, "${
-            paper.title
-          }" (ID: ${paperId}).
-          
-          Recommendation: ${recommendation}
-          
-          Reviewer Comments:
-          ${comments}
-          
-          You can log in to the portal to view the full details and respond.
-          
-          Best regards,
-          Conference Admin Team
-        `,
-      }).catch(console.error);
-    }
-
-    // 3. Optionally, update paper status
+    // 3. Update paper status (if it's the first review or a re-review)
+    // We check for PENDING_REVIEW and update it.
+    // We also check for RESUBMITTED (from author) and update it back to UNDER_REVIEW
     await prisma.paper.updateMany({
       where: {
         id: parseInt(paperId),
-        status: "UNDER_REVIEW",
+        OR: [{ status: "PENDING_REVIEW" }, { status: "RESUBMITTED" }],
       },
-      // We might not change status here, maybe admin decides
-      // Or we can set it to 'REVIEWED'
-      // Let's leave it as 'UNDER_REVIEW' for now, admin will make final decision
+      data: {
+        status: "UNDER_REVIEW", // <-- THIS IS THE DATA BLOCK THAT WAS MISSING
+      },
     });
+
+    // <-- NEW: Notify authors that a review was submitted -->
+    // 4. Find all corresponding authors for this paper
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(paperId) },
+      include: {
+        authors: {
+          where: {
+            isCorresponding: true,
+            email: { not: null },
+          },
+        },
+      },
+    });
+
+    // 5. Send email to all corresponding authors
+    if (paper && paper.authors.length > 0) {
+      const authorEmails = paper.authors.map((author) => author.email);
+      const mailSubject = `A new review has been submitted for your paper: "${paper.title}"`;
+      const mailText = `
+        Hello,
+
+        A new review has been submitted for your paper, "${paper.title}".
+
+        The reviewer's recommendation is: ${recommendation.replace(/_/g, " ")}
+
+        Reviewer's Comments:
+        --------------------
+        ${comments}
+        --------------------
+
+        You can view this feedback by logging into your author dashboard.
+
+        Best regards,
+        Conference Admin Team
+      `;
+
+      // Send email to all corresponding authors
+      for (const email of authorEmails) {
+        sendEmail({
+          to: email,
+          subject: mailSubject,
+          text: mailText,
+        }).catch(console.error); // Send async and log error if it fails
+      }
+    }
+    // <-- END NEW SECTION -->
 
     res.status(201).json({ message: "Review submitted successfully", review });
   } catch (error) {
@@ -276,39 +290,50 @@ export const submitFeedback = async (req, res) => {
       },
     });
 
-    // <-- NEW: Notify corresponding authors of the feedback
+    // <-- NEW: Notify authors that feedback was sent -->
+    // 3. Find all corresponding authors for this paper
     const paper = await prisma.paper.findUnique({
       where: { id: parseInt(paperId) },
-      select: { title: true },
-    });
-
-    const correspondingAuthors = await prisma.author.findMany({
-      where: {
-        paperId: parseInt(paperId),
-        isCorresponding: true,
-        email: { not: null },
+      include: {
+        authors: {
+          where: {
+            isCorresponding: true,
+            email: { not: null },
+          },
+        },
       },
     });
 
-    for (const author of correspondingAuthors) {
-      sendEmail({
-        to: author.email,
-        subject: `[New Feedback] A reviewer has sent a message for "${paper.title}"`,
-        text: `
-          Hello ${author.salutation || ""} ${author.name},
-          
-          A reviewer has posted a new feedback message regarding your paper, "${paper.title}" (ID: ${paperId}).
-          
-          Message:
-          ${message}
-          
-          You can log in to the portal to see the details.
-          
-          Best regards,
-          Conference Admin Team
-        `,
-      }).catch(console.error);
+    // 4. Send email to all corresponding authors
+    if (paper && paper.authors.length > 0) {
+      const authorEmails = paper.authors.map((author) => author.email);
+      const mailSubject = `New message from a reviewer for paper: "${paper.title}"`;
+      const mailText = `
+        Hello,
+
+        A reviewer has sent a new message regarding your paper, "${paper.title}".
+
+        Message:
+        --------------------
+        ${message}
+        --------------------
+
+        You can reply to this message by logging into your author dashboard.
+
+        Best regards,
+        Conference Admin Team
+      `;
+
+      // Send email to all corresponding authors
+      for (const email of authorEmails) {
+        sendEmail({
+          to: email,
+          subject: mailSubject,
+          text: mailText,
+        }).catch(console.error);
+      }
     }
+    // <-- END NEW SECTION -->
 
     res.status(201).json({ message: "Feedback sent", feedback });
   } catch (error) {

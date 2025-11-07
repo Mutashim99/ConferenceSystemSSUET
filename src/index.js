@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
@@ -17,7 +18,7 @@ const app = express();
 // CORS setup to allow credentials (cookies)
 app.use(
   cors({
-    origin: "https://conferencesystem.vercel.app",
+    origin: "http://localhost:5173",
     credentials: true,
   })
 );
