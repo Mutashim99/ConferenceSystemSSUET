@@ -1,5 +1,6 @@
-import prisma from '../libs/prisma.js';
-import { validationResult } from 'express-validator';
+import prisma from "../libs/prisma.js";
+import { validationResult } from "express-validator";
+import { sendEmail } from "../utils/mail.js"; // <-- NEW: Added email utility
 
 /**
  * Get all papers assigned to the logged-in reviewer.
@@ -37,12 +38,12 @@ export const getAssignedPapers = async (req, res) => {
         },
       },
       orderBy: {
-        submittedAt: 'desc',
+        submittedAt: "desc",
       },
     });
 
     // Clean up the response to be more useful
-    const response = papers.map(paper => ({
+    const response = papers.map((paper) => ({
       ...paper,
       // Add a boolean to tell the frontend if a review is done
       hasReviewed: paper.reviews.length > 0,
@@ -50,8 +51,8 @@ export const getAssignedPapers = async (req, res) => {
 
     res.status(200).json(response);
   } catch (error) {
-    console.error('Error fetching assigned papers:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching assigned papers:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -82,16 +83,15 @@ export const getAssignedPaperById = async (req, res) => {
             affiliation: true,
           },
         },
-        coAuthors: true,
+        authors: true, // Updated from coAuthors
         // Get all reviews, but hide who wrote them (blind review)
         reviews: {
           select: {
             id: true,
             comments: true,
-            rating: true,
             recommendation: true,
             reviewedAt: true,
-            reviewerId:true
+            reviewerId: true,
           },
         },
         // Get the full feedback/conversation thread
@@ -107,20 +107,22 @@ export const getAssignedPaperById = async (req, res) => {
             },
           },
           orderBy: {
-            sentAt: 'asc',
+            sentAt: "asc",
           },
         },
       },
     });
 
     if (!paper) {
-      return res.status(404).json({ message: 'Paper not found or you are not assigned to it.' });
+      return res
+        .status(404)
+        .json({ message: "Paper not found or you are not assigned to it." });
     }
 
     res.status(200).json(paper);
   } catch (error) {
-    console.error('Error fetching paper details:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching paper details:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -136,7 +138,7 @@ export const submitReview = async (req, res) => {
 
   const reviewerId = req.user.id;
   const { paperId } = req.params;
-  const { comments, rating, recommendation } = req.body;
+  const { comments, recommendation } = req.body; // 'rating' was removed
 
   try {
     // 1. Check if reviewer is actually assigned to this paper
@@ -150,7 +152,9 @@ export const submitReview = async (req, res) => {
     });
 
     if (!assignment) {
-      return res.status(403).json({ message: 'You are not assigned to review this paper.' });
+      return res
+        .status(403)
+        .json({ message: "You are not assigned to review this paper." });
     }
 
     // 2. Use upsert: create review if it doesn't exist, update it if it does
@@ -166,34 +170,69 @@ export const submitReview = async (req, res) => {
         paperId: parseInt(paperId),
         reviewerId: reviewerId,
         comments,
-        rating: parseInt(rating),
         recommendation, // e.g., 'ACCEPT', 'REJECT', etc.
       },
       // What to update if it does exist
       update: {
         comments,
-        rating: parseInt(rating),
         recommendation,
         reviewedAt: new Date(), // Update the timestamp
       },
     });
 
-    // Optionally, update paper status if this is the first review
-    // (This could also be a job for the admin later)
+    // <-- NEW: Send blind review notification to corresponding authors
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(paperId) },
+      select: { title: true },
+    });
+
+    const correspondingAuthors = await prisma.author.findMany({
+      where: {
+        paperId: parseInt(paperId),
+        isCorresponding: true,
+        email: { not: null },
+      },
+    });
+
+    for (const author of correspondingAuthors) {
+      sendEmail({
+        to: author.email,
+        subject: `[Review Submitted] A new review is available for "${paper.title}"`,
+        text: `
+          Hello ${author.salutation || ""} ${author.name},
+          
+          A new (blind) review has been submitted for your paper, "${
+            paper.title
+          }" (ID: ${paperId}).
+          
+          Recommendation: ${recommendation}
+          
+          Reviewer Comments:
+          ${comments}
+          
+          You can log in to the portal to view the full details and respond.
+          
+          Best regards,
+          Conference Admin Team
+        `,
+      }).catch(console.error);
+    }
+
+    // 3. Optionally, update paper status
     await prisma.paper.updateMany({
       where: {
         id: parseInt(paperId),
-        status: 'PENDING_REVIEW' // Only update if it's pending
+        status: "UNDER_REVIEW",
       },
-      data: {
-        status: 'UNDER_REVIEW' // Mark as in progress
-      }
+      // We might not change status here, maybe admin decides
+      // Or we can set it to 'REVIEWED'
+      // Let's leave it as 'UNDER_REVIEW' for now, admin will make final decision
     });
 
-    res.status(201).json({ message: 'Review submitted successfully', review });
+    res.status(201).json({ message: "Review submitted successfully", review });
   } catch (error) {
-    console.error('Error submitting review:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error submitting review:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -223,7 +262,9 @@ export const submitFeedback = async (req, res) => {
     });
 
     if (!assignment) {
-      return res.status(403).json({ message: 'You are not assigned to this paper.' });
+      return res
+        .status(403)
+        .json({ message: "You are not assigned to this paper." });
     }
 
     // 2. Create the feedback message
@@ -235,9 +276,43 @@ export const submitFeedback = async (req, res) => {
       },
     });
 
-    res.status(201).json({ message: 'Feedback sent', feedback });
+    // <-- NEW: Notify corresponding authors of the feedback
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(paperId) },
+      select: { title: true },
+    });
+
+    const correspondingAuthors = await prisma.author.findMany({
+      where: {
+        paperId: parseInt(paperId),
+        isCorresponding: true,
+        email: { not: null },
+      },
+    });
+
+    for (const author of correspondingAuthors) {
+      sendEmail({
+        to: author.email,
+        subject: `[New Feedback] A reviewer has sent a message for "${paper.title}"`,
+        text: `
+          Hello ${author.salutation || ""} ${author.name},
+          
+          A reviewer has posted a new feedback message regarding your paper, "${paper.title}" (ID: ${paperId}).
+          
+          Message:
+          ${message}
+          
+          You can log in to the portal to see the details.
+          
+          Best regards,
+          Conference Admin Team
+        `,
+      }).catch(console.error);
+    }
+
+    res.status(201).json({ message: "Feedback sent", feedback });
   } catch (error) {
-    console.error('Error submitting feedback:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error submitting feedback:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };

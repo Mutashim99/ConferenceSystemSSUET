@@ -139,7 +139,7 @@ export const getPaperById = async (req, res) => {
             affiliation: true,
           },
         },
-        coAuthors: true,
+        authors: true, // Updated from coAuthors
         // Include reviews and the reviewer's info
         reviews: {
           include: {
@@ -202,18 +202,29 @@ export const deletePaper = async (req, res) => {
   const { id } = req.params;
 
   try {
+    // <-- NEW: Find paper and corresponding authors *before* deleting
     const paper = await prisma.paper.findUnique({
       where: { id: parseInt(id) },
+      include: {
+        authors: {
+          where: { isCorresponding: true, email: { not: null } },
+          select: { email: true, name: true, salutation: true },
+        },
+      },
     });
 
     if (!paper) {
       return res.status(404).json({ message: "Paper not found" });
     }
 
+    const authorsToNotify = paper.authors;
+    const paperTitle = paper.title;
+    const oldFileUrl = paper.fileUrl;
+
     // 1. Delete the file from Cloudinary
-    if (paper.fileUrl) {
+    if (oldFileUrl) {
       try {
-        const urlParts = paper.fileUrl.split("/");
+        const urlParts = oldFileUrl.split("/");
         const publicId = urlParts
           .slice(urlParts.indexOf("conference_papers"))
           .join("/")
@@ -224,25 +235,37 @@ export const deletePaper = async (req, res) => {
           "Could not delete file from Cloudinary:",
           cloudinaryError.message
         );
-        // We don't stop the process, just log a warning.
       }
     }
 
     // 2. Delete the paper from the database
-    // Prisma cascading delete (if set up) should handle related reviews, assignments, etc.
-    // If not, you must delete related records manually in a transaction.
-    // Assuming `onDelete: Cascade` is set or you handle it.
-    // Let's do it manually just in case, in a transaction.
-
     await prisma.$transaction([
       prisma.feedback.deleteMany({ where: { paperId: parseInt(id) } }),
       prisma.review.deleteMany({ where: { paperId: parseInt(id) } }),
       prisma.reviewerAssignment.deleteMany({
         where: { paperId: parseInt(id) },
       }),
-      prisma.coAuthor.deleteMany({ where: { paperId: parseInt(id) } }),
+      prisma.author.deleteMany({ where: { paperId: parseInt(id) } }), // Updated from coAuthor
       prisma.paper.delete({ where: { id: parseInt(id) } }),
     ]);
+
+    // <-- NEW: Send notification email to corresponding authors
+    for (const author of authorsToNotify) {
+      sendEmail({
+        to: author.email,
+        subject: `[Notification] Your paper "${paperTitle}" has been deleted`,
+        text: `
+          Hello ${author.salutation || ""} ${author.name},
+          
+          We are writing to inform you that your paper submission, "${paperTitle}" (ID: ${id}), has been deleted from the conference system by an administrator.
+          
+          If you believe this was in error, please contact the conference organizers.
+          
+          Best regards,
+          Conference Admin Team
+        `,
+      }).catch(console.error);
+    }
 
     res.status(200).json({ message: "Paper deleted successfully" });
   } catch (error) {
@@ -279,6 +302,34 @@ export const approvePaper = async (req, res) => {
         status: "PENDING_REVIEW",
       },
     });
+
+    // <-- NEW: Send notification email to corresponding authors
+    const correspondingAuthors = await prisma.author.findMany({
+      where: {
+        paperId: updatedPaper.id,
+        isCorresponding: true,
+        email: { not: null },
+      },
+    });
+
+    for (const author of correspondingAuthors) {
+      sendEmail({
+        to: author.email,
+        subject: `[Update] Your paper "${updatedPaper.title}" has been approved`,
+        text: `
+          Hello ${author.salutation || ""} ${author.name},
+          
+          Good news! Your paper submission, "${
+            updatedPaper.title
+          }" (ID: ${updatedPaper.id}), has been approved by the administrators.
+          
+          It is now in the queue for reviewer assignment. You will be notified when its status changes.
+          
+          Best regards,
+          Conference Admin Team
+        `,
+      }).catch(console.error);
+    }
 
     res
       .status(200)
@@ -322,8 +373,37 @@ export const updatePaperStatus = async (req, res) => {
       },
     });
 
-    // TODO: Notify author via email about the decision
-    // (We can add this later, but the status update is done)
+    // <-- NEW: Notify corresponding authors about the final decision
+    const correspondingAuthors = await prisma.author.findMany({
+      where: {
+        paperId: updatedPaper.id,
+        isCorresponding: true,
+        email: { not: null },
+      },
+    });
+
+    const decision = status.replace("_", " "); // e.g., "REVISION REQUIRED"
+
+    for (const author of correspondingAuthors) {
+      sendEmail({
+        to: author.email,
+        subject: `[Decision] Your paper "${updatedPaper.title}" has been ${decision}`,
+        text: `
+          Hello ${author.salutation || ""} ${author.name},
+          
+          A final decision has been made for your paper, "${
+            updatedPaper.title
+          }" (ID: ${updatedPaper.id}).
+          
+          The final status is: ${decision}
+          
+          You can log in to the portal to view all reviews and feedback.
+          
+          Best regards,
+          Conference Admin Team
+        `,
+      }).catch(console.error);
+    }
 
     res.status(200).json({
       message: `Paper status updated to ${status}`,
@@ -380,9 +460,6 @@ export const assignReviewersToPaper = async (req, res) => {
   try {
     const paper = await prisma.paper.findUnique({
       where: { id: parseInt(id) },
-      include: {
-        author: true, // Need author's email for notification
-      },
     });
 
     if (!paper) {
@@ -401,11 +478,44 @@ export const assignReviewersToPaper = async (req, res) => {
     });
 
     // 2. Update paper status
-    if (paper.status === "PENDING_REVIEW") {
+    if (
+      paper.status === "PENDING_REVIEW" ||
+      paper.status === "RESUBMITTED"
+    ) {
       await prisma.paper.update({
         where: { id: parseInt(id) },
         data: { status: "UNDER_REVIEW" },
       });
+
+      // <-- NEW: Notify corresponding authors that the paper is now under review
+      const correspondingAuthors = await prisma.author.findMany({
+        where: {
+          paperId: paper.id,
+          isCorresponding: true,
+          email: { not: null },
+        },
+      });
+
+      for (const author of correspondingAuthors) {
+        sendEmail({
+          to: author.email,
+          subject: `[Update] Your paper "${paper.title}" is now Under Review`,
+          text: `
+            Hello ${author.salutation || ""} ${author.name},
+            
+            Your paper, "${
+              paper.title
+            }" (ID: ${
+            paper.id
+          }), has been assigned to reviewers and is now officially UNDER REVIEW.
+            
+            You will be notified once the reviews are complete.
+            
+            Best regards,
+            Conference Admin Team
+          `,
+        }).catch(console.error);
+      }
     }
 
     // 3. Send emails to the assigned reviewers (async, don't block response)
