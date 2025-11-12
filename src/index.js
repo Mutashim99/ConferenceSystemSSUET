@@ -18,7 +18,7 @@ const app = express();
 // CORS setup to allow credentials (cookies)
 app.use(
   cors({
-    origin: ["https://localhost:5173","https://conferencesystem.vercel.app"],
+    origin: ["http://localhost:5173","https://conferencesystem.vercel.app","https://icisct.com"],
     credentials: true,
   })
 );
