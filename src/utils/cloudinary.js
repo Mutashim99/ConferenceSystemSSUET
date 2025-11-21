@@ -13,14 +13,21 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'conference_papers', // A folder in Cloudinary to store papers
-    resource_type: 'raw', // We are uploading files, not just images
+    folder: 'conference_papers',
+    resource_type: 'raw', 
     allowed_formats: ['pdf', 'doc', 'docx'],
-    // Use the original filename
+    
+    // --- THE FIX IS HERE ---
     public_id: (req, file) => {
-      // Create a unique-ish file name
-      const fileName = file.originalname.split('.').slice(0, -1).join('.');
-      return `${fileName}-${Date.now()}`;
+      // 1. Get the filename without extension
+      const nameWithoutExt = file.originalname.split('.').slice(0, -1).join('.');
+      
+      // 2. Get the actual extension (e.g., 'pdf')
+      const extension = file.originalname.split('.').pop();
+
+      // 3. Return: Name + Timestamp + DOT + Extension
+      // Example result: "my-paper-176348317.pdf"
+      return `${nameWithoutExt}-${Date.now()}.${extension}`;
     },
   },
 });
@@ -29,7 +36,6 @@ const storage = new CloudinaryStorage({
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    // Basic validation for file types
     if (!file.mimetype.match(/pdf|doc|docx|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document/)) {
       cb(new Error('File format not supported. Please upload a PDF, DOC, or DOCX.'), false);
       return;

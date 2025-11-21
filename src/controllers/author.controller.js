@@ -68,7 +68,7 @@ export const submitPaper = async (req, res) => {
     );
 
     const dashboardUrl =
-      process.env.DASHBOARD_URL || "your-conference-portal.com/login";
+      process.env.DASHBOARD_URL || "https://icisct.com/login";
 
     for (const author of correspondingAuthors) {
       if (author.email === req.user.email) {
@@ -167,7 +167,7 @@ export const submitPaper = async (req, res) => {
       });
 
       const paperUrl = `${
-        process.env.DASHBOARD_URL || "your-portal.com"
+        process.env.DASHBOARD_URL || "https://icisct.com/"
       }/admin/papers/${newPaper.id}`;
 
       for (const admin of admins) {
@@ -474,7 +474,7 @@ export const resubmitPaper = async (req, res) => {
       });
 
       const paperUrl = `${
-        process.env.DASHBOARD_URL || "your-portal.com"
+        process.env.DASHBOARD_URL || "https://icisct.com"
       }/admin/papers/${updatedPaper.id}`;
 
       for (const admin of admins) {
@@ -518,7 +518,7 @@ export const resubmitPaper = async (req, res) => {
       });
 
       const paperUrl = `${
-        process.env.DASHBOARD_URL || "your-portal.com"
+        process.env.DASHBOARD_URL || "https://icisct.com"
       }/reviewer/papers/${updatedPaper.id}`; // URL for reviewers
 
       for (const assignment of assignments) {
