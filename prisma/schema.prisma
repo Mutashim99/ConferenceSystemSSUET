@@ -30,6 +30,7 @@ model User {
   reviews      Review[]  @relation("ReviewerReviews")
   feedbacks    Feedback[]
   assignments  ReviewerAssignment[]
+  loginLogs    LoginLog[]
 }
 
 enum Role {
@@ -135,4 +136,14 @@ model Feedback {
 
   paper      Paper    @relation(fields: [paperId], references: [id])
   sender     User     @relation(fields: [senderId], references: [id])
+}
+
+model LoginLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  ipAddress String?  // Good for security (e.g., "New login from IP x.x.x.x")
+  userAgent String?  // Good for identifying devices (e.g., "Chrome on Windows")
+  loginAt   DateTime @default(now())
 }

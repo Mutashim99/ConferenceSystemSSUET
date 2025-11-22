@@ -1,11 +1,11 @@
-import prisma from '../libs/prisma.js';
+import prisma from "../libs/prisma.js";
 import {
   hashPassword,
   comparePassword,
   generateToken,
   setTokenCookie,
-} from '../utils/auth.js';
-import { validationResult } from 'express-validator';
+} from "../utils/auth.js";
+import { validationResult } from "express-validator";
 
 /**
  * Register a new user (AUTHOR).
@@ -18,15 +18,17 @@ export const registerAuthor = async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { firstName, middleName, lastName, affiliation, email, password } = req.body;
+  const { firstName, middleName, lastName, affiliation, email, password } =
+    req.body;
 
   try {
     // 2. Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ message: 'User already exists with this email' });
+      return res
+        .status(400)
+        .json({ message: "User already exists with this email" });
     }
-    
 
     // 3. Hash the password
     const hashedPassword = await hashPassword(password);
@@ -40,9 +42,10 @@ export const registerAuthor = async (req, res) => {
         affiliation,
         email,
         password: hashedPassword,
-        role: 'AUTHOR', // Default role for public registration
+        role: "AUTHOR", // Default role for public registration
       },
-      select: { // Select the data to return (exclude password)
+      select: {
+        // Select the data to return (exclude password)
         id: true,
         email: true,
         firstName: true,
@@ -61,12 +64,12 @@ export const registerAuthor = async (req, res) => {
 
     // 7. Send response
     res.status(201).json({
-      message: 'User registered successfully',
+      message: "User registered successfully",
       user,
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Server error during registration' });
+    console.error("Registration error:", error);
+    res.status(500).json({ message: "Server error during registration" });
   }
 };
 
@@ -87,13 +90,35 @@ export const loginUser = async (req, res) => {
     // 2. Find user by email
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     // 3. Compare passwords
     const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+    try {
+      // Handle IP address extraction (works for local & production/proxies)
+      const ipRaw = req.headers["x-forwarded-for"] || req.ip || "Unknown";
+      // If x-forwarded-for returns a list (e.g. "client, proxy"), take the first one
+      const ipAddress = Array.isArray(ipRaw)
+        ? ipRaw[0]
+        : ipRaw.split(",")[0].trim();
+
+      const userAgent = req.headers["user-agent"] || "Unknown";
+
+      await prisma.loginLog.create({
+        data: {
+          userId: user.id,
+          ipAddress: ipAddress,
+          userAgent: userAgent,
+        },
+      });
+    } catch (logError) {
+      // We silently catch logging errors so the user can still log in
+      // even if the log table fails for some reason.
+      console.error("Failed to save login log:", logError);
     }
 
     // 4. Generate JWT
@@ -101,17 +126,17 @@ export const loginUser = async (req, res) => {
 
     // 5. Set token in cookie
     setTokenCookie(res, token);
-    
+
     // 6. Send response (excluding password)
     const { password: _, ...userWithoutPassword } = user;
 
     res.status(200).json({
-      message: 'Logged in successfully',
+      message: "Logged in successfully",
       user: userWithoutPassword,
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Server error during login' });
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error during login" });
   }
 };
 
@@ -120,14 +145,17 @@ export const loginUser = async (req, res) => {
  * @route POST /api/auth/logout
  */
 export const logoutUser = (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.cookie('token', '', {
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, private"
+  );
+  res.cookie("token", "", {
     httpOnly: true,
     secure: true, // MUST match the login cookie
-    sameSite: 'none', // MUST match the login cookie
-    expires: new Date(0), 
+    sameSite: "none", // MUST match the login cookie
+    expires: new Date(0),
   });
-  res.status(200).json({ message: 'Logged out successfully' });
+  res.status(200).json({ message: "Logged out successfully" });
 };
 /**
  * Get the currently authenticated user's profile.
