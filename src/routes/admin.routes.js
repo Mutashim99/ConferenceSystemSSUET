@@ -9,6 +9,7 @@ import {
   updatePaperStatus,
   getAllReviewers,
   assignReviewersToPaper,
+  updatePaymentStatus
 } from '../controllers/admin.controller.js';
 // UPDATED IMPORT:
 import { protect, isAdmin } from '../middlewares/auth.middleware.js';
@@ -56,12 +57,19 @@ router.patch(
   updatePaperStatus
 );
 
+router.patch(
+  '/papers/:id/payment-status',
+  [body('paymentStatus', 'Payment status is required').isIn(['UNPAID', 'PAID', 'WAIVED'])], 
+  updatePaymentStatus
+);
+
 // POST /api/admin/papers/:id/assign
 router.post(
   '/papers/:id/assign',
   [body('reviewerIds', 'Reviewer IDs must be an array').isArray({ min: 1 })],
   assignReviewersToPaper
 );
+
 
 export default router;
 

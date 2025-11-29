@@ -7,6 +7,7 @@ import {
   getAuthorPaperById, // New
   submitFeedback,     // New
   resubmitPaper,      // New
+  uploadCameraReady
 } from '../controllers/author.controller.js';
 import  upload  from '../utils/cloudinary.js';
 
@@ -55,6 +56,15 @@ router.post(
   '/papers/:paperId/resubmit',
   upload.single('paper'), // Use multer for the new file upload
   resubmitPaper
+);
+
+// --- NEW ROUTE: Upload Camera Ready Paper ---
+// @route   POST /api/author/papers/:paperId/camera-ready
+// @desc    Upload the final version after acceptance
+router.post(
+  '/papers/:paperId/camera-ready',
+  upload.single('cameraReady'), // <--- NOTE: Field name is 'cameraReady'
+  uploadCameraReady
 );
 
 export default router;

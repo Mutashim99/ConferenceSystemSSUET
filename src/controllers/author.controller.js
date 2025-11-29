@@ -559,3 +559,95 @@ export const resubmitPaper = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * Upload the Camera Ready version of an ACCEPTED paper.
+ * @route POST /api/author/papers/:paperId/camera-ready
+ */
+export const uploadCameraReady = async (req, res) => {
+  const { paperId } = req.params;
+  const authorId = req.user.id;
+
+  if (!req.file) {
+    return res.status(400).json({ message: "Camera Ready file is required" });
+  }
+
+  try {
+    // 1. Find paper and verify ownership
+    const paper = await prisma.paper.findFirst({
+      where: {
+        id: parseInt(paperId),
+        authorId: authorId, // Only the primary submitter can do this
+      },
+    });
+
+    if (!paper) {
+      // Delete the uploaded file immediately if permission fails
+      await cloudinary.uploader.destroy(req.file.filename, { resource_type: "raw" });
+      return res.status(404).json({
+        message: "Paper not found or you are not the primary author.",
+      });
+    }
+
+    // 2. CRITICAL: Ensure paper is actually ACCEPTED
+    if (paper.status !== "ACCEPTED") {
+      await cloudinary.uploader.destroy(req.file.filename, { resource_type: "raw" });
+      return res.status(400).json({
+        message: "You can only submit a Camera Ready version for ACCEPTED papers.",
+      });
+    }
+
+    const oldCameraReadyUrl = paper.cameraReadyUrl;
+
+    // 3. Update Database
+    const updatedPaper = await prisma.paper.update({
+      where: { id: parseInt(paperId) },
+      data: {
+        cameraReadyUrl: req.file.path,
+      },
+    });
+
+    // 4. Cleanup: If a camera ready file ALREADY existed, delete the old one
+    if (oldCameraReadyUrl) {
+      try {
+        const urlParts = oldCameraReadyUrl.split("/");
+        const publicId = urlParts
+          .slice(urlParts.indexOf("conference_papers"))
+          .join("/")
+          .split(".")[0];
+        
+        await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
+      } catch (cloudinaryError) {
+        console.warn("Could not delete old Camera Ready file:", cloudinaryError.message);
+      }
+    }
+
+    // 5. Notify Admins
+    const admins = await prisma.user.findMany({
+      where: { role: "ADMIN" },
+      select: { email: true },
+    });
+
+    for (const admin of admins) {
+      sendEmail({
+        to: admin.email,
+        subject: `[Camera Ready] Final version uploaded for "${paper.title}"`,
+        text: `
+          The author has uploaded the Camera Ready version for the accepted paper:
+          "${paper.title}" (ID: ${paper.id}).
+          
+          You can download it from the admin dashboard.
+        `,
+      }).catch(console.error);
+    }
+
+    res.status(200).json({
+      message: "Camera Ready paper uploaded successfully",
+      paper: updatedPaper,
+    });
+
+  } catch (error) {
+    console.error("Error uploading camera ready paper:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};

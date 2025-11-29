@@ -39,6 +39,11 @@ enum Role {
   REVIEWER
 }
 
+enum PaymentStatus {
+  UNPAID
+  PAID
+  WAIVED // Optional, but good to have just in case
+}
 model Paper {
   id            Int         @id @default(autoincrement())
   title         String
@@ -49,6 +54,8 @@ model Paper {
   status        PaperStatus @default(PENDING_APPROVAL)
   submittedAt   DateTime    @default(now())
 
+  cameraReadyUrl  String?           // Nullable, strictly for the final version
+  paymentStatus   PaymentStatus     @default(UNPAID)
   authorId      Int
   author        User        @relation("AuthorPapers", fields: [authorId], references: [id]) // The user who submitted the paper
 

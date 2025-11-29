@@ -22,12 +22,16 @@ const storage = new CloudinaryStorage({
       // 1. Get the filename without extension
       const nameWithoutExt = file.originalname.split('.').slice(0, -1).join('.');
       
-      // 2. Get the actual extension (e.g., 'pdf')
+      // 2. SANITIZE: Replace any character that is NOT a letter, number, dash, or underscore with "_"
+      // This strips out =, &, ?, spaces, and other "unsafe" characters that crash Cloudinary
+      const sanitizedName = nameWithoutExt.replace(/[^a-zA-Z0-9-_]/g, '_');
+
+      // 3. Get the actual extension (e.g., 'pdf')
       const extension = file.originalname.split('.').pop();
 
-      // 3. Return: Name + Timestamp + DOT + Extension
-      // Example result: "my-paper-176348317.pdf"
-      return `${nameWithoutExt}-${Date.now()}.${extension}`;
+      // 4. Return: SanitizedName + Timestamp + DOT + Extension
+      // Example result: "edusmartz_ssuet_edu_pk_StudentPortal_...-1764447840038.pdf"
+      return `${sanitizedName}-${Date.now()}.${extension}`;
     },
   },
 });

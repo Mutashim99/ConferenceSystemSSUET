@@ -549,3 +549,76 @@ export const assignReviewersToPaper = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * Update a paper's Payment Status (Fees).
+ * @route PATCH /api/admin/papers/:id/payment-status
+ */
+export const updatePaymentStatus = async (req, res) => {
+  const { id } = req.params;
+  const { paymentStatus } = req.body; // Expects: "UNPAID", "PAID", or "WAIVED"
+
+  // Validate against the Enum we added to Prisma
+  const validStatuses = ["UNPAID", "PAID", "WAIVED"];
+  if (!validStatuses.includes(paymentStatus)) {
+    return res.status(400).json({
+      message: "Invalid status. Must be UNPAID, PAID, or WAIVED",
+    });
+  }
+
+  try {
+    const paper = await prisma.paper.findUnique({
+      where: { id: parseInt(id) },
+    });
+
+    if (!paper) {
+      return res.status(404).json({ message: "Paper not found" });
+    }
+
+    const updatedPaper = await prisma.paper.update({
+      where: { id: parseInt(id) },
+      data: {
+        paymentStatus: paymentStatus,
+      },
+    });
+
+    // Notify authors if the payment is confirmed (PAID or WAIVED)
+    if (paymentStatus === "PAID" || paymentStatus === "WAIVED") {
+      const correspondingAuthors = await prisma.author.findMany({
+        where: {
+          paperId: updatedPaper.id,
+          isCorresponding: true,
+          email: { not: null },
+        },
+      });
+
+      for (const author of correspondingAuthors) {
+        sendEmail({
+          to: author.email,
+          subject: `[Payment Confirmation] Fees for "${updatedPaper.title}"`,
+          text: `
+            Hello ${author.salutation || ""} ${author.name},
+            
+            This is a confirmation that the registration fees for your paper:
+            "${updatedPaper.title}" (ID: ${updatedPaper.id})
+            
+            Have been marked as: ${paymentStatus}.
+            
+            Thank you for completing the registration process.
+            
+            Best regards,
+            Conference Admin Team
+          `,
+        }).catch(console.error);
+      }
+    }
+
+    res.status(200).json({
+      message: `Payment status updated to ${paymentStatus}`,
+      paper: updatedPaper,
+    });
+  } catch (error) {
+    console.error("Error updating payment status:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
