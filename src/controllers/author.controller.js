@@ -68,7 +68,7 @@ export const submitPaper = async (req, res) => {
     );
 
     const dashboardUrl =
-      process.env.DASHBOARD_URL || "https://icisct.com/login";
+      process.env.DASHBOARD_URL || "https://icisct.com/author/dashboard/";
     // ============================================================
     // 1. SEND RECEIPT TO THE SUBMITTER (Logged-in User)
     // ============================================================
