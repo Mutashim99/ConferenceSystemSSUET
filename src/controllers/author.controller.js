@@ -69,90 +69,233 @@ export const submitPaper = async (req, res) => {
 
     const dashboardUrl =
       process.env.DASHBOARD_URL || "https://icisct.com/login";
+    // ============================================================
+    // 1. SEND RECEIPT TO THE SUBMITTER (Logged-in User)
+    // ============================================================
+    // This runs NO MATTER WHAT. It confirms submission to the person who clicked "Submit".
+    try {
+      await sendEmail({
+        to: req.user.email,
+        subject: `[Submission Receipt] ${newPaper.title}`,
+        text: `
+          Hello ${req.user.firstName || "Author"},
 
-    for (const author of correspondingAuthors) {
+          This is a confirmation that your paper has been successfully submitted to the conference.
+
+          Title: ${newPaper.title}
+          Paper ID: ${newPaper.id}
+          Date: ${new Date().toLocaleString()}
+
+          You can track the status of your paper in your dashboard.
+
+          Best regards,
+          Conference Admin Team
+        `,
+      });
+      console.log(`Receipt sent to submitter: ${req.user.email}`);
+    } catch (err) {
+      console.error("Failed to send receipt to submitter:", err);
+    }
+
+    // ============================================================
+    // 2. NOTIFY ALL OTHER AUTHORS (Corresponding & Non-Corresponding)
+    // ============================================================
+
+    // Loop through EVERYONE listed in the form
+    for (const author of newPaper.authors) {
+      // SKIP THE SUBMITTER (We already sent them the receipt above)
       if (author.email === req.user.email) {
         continue;
       }
 
-      const existingUser = await prisma.user.findUnique({
-        where: { email: author.email },
-      });
+      // ----------------------------------------------------------
+      // CASE A: CORRESPONDING AUTHORS (Need Accounts/Login Access)
+      // ----------------------------------------------------------
+      if (author.isCorresponding) {
+        const existingUser = await prisma.user.findUnique({
+          where: { email: author.email },
+        });
 
-      if (!existingUser) {
-        const tempPassword = Math.random().toString(36).slice(-8);
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(tempPassword, salt);
+        if (!existingUser) {
+          // --- CREATE NEW ACCOUNT ---
+          const tempPassword = Math.random().toString(36).slice(-8);
+          const salt = await bcrypt.genSalt(10);
+          const hashedPassword = await bcrypt.hash(tempPassword, salt);
+          const nameParts = author.name.split(" ");
+          const firstName = nameParts[0];
+          const lastName =
+            nameParts.length > 1
+              ? nameParts.slice(1).join(" ")
+              : "(No Last Name)";
 
-        const nameParts = author.name.split(" ");
-        const firstName = nameParts[0];
-        const lastName =
-          nameParts.length > 1 ? nameParts.slice(1).join(" ") : "(No Last Name)";
+          try {
+            await prisma.user.create({
+              data: {
+                firstName,
+                lastName,
+                email: author.email,
+                affiliation: author.institute,
+                password: hashedPassword,
+                role: "AUTHOR",
+              },
+            });
 
-        try {
-          await prisma.user.create({
-            data: {
-              firstName,
-              lastName,
-              email: author.email,
-              affiliation: author.institute,
-              password: hashedPassword,
-              role: "AUTHOR",
-            },
-          });
+            // Send "Account Created" Email
+            await sendEmail({
+              to: author.email,
+              subject: "Your Account for the Conference Portal",
+              text: `
+                Hello ${author.salutation || ""} ${author.name},
+                
+                You have been listed as a CORRESPONDING AUTHOR for the paper:
+                "${newPaper.title}" (ID: ${newPaper.id})
+                
+                An account has been created for you to manage this submission.
+                
+                Email: ${author.email}
+                Password: ${tempPassword}
+                URL: ${dashboardUrl}
+                
+                Please change your password after logging in.
+                
+                Best regards,
+                Conference Admin Team
+              `,
+            }).catch(console.error);
+          } catch (createUserError) {
+            console.error(
+              `Failed to create user for ${author.email}`,
+              createUserError
+            );
+          }
+        } else {
+          // --- USER EXISTS: JUST NOTIFY ---
+          await sendEmail({
+            to: author.email,
+            subject: "You are listed as a Corresponding Author",
+            text: `
+              Hello ${author.salutation || ""} ${author.name},
+              
+              You have been listed as a corresponding author for a new paper submission:
+              "${newPaper.title}" (ID: ${newPaper.id})
+              
+              This paper has been added to your dashboard. You can log in to your existing account to view it:
+              URL: ${dashboardUrl}
+              
+              Best regards,
+              Conference Admin Team
+            `,
+          }).catch(console.error);
+        }
+      }
 
-          // Send "Welcome" email with credentials
-          const mailSubject = "Your Account for the Conference Portal";
-          const mailText = `
+      // ----------------------------------------------------------
+      // CASE B: NON-CORRESPONDING (REGULAR) CO-AUTHORS
+      // ----------------------------------------------------------
+      else {
+        // Just a simple FYI email. No login info needed.
+        await sendEmail({
+          to: author.email,
+          subject: `[Co-Author Notification] You were listed on a paper`,
+          text: `
             Hello ${author.salutation || ""} ${author.name},
+
+            This is an automated notification to inform you that you have been listed as a co-author on a new paper submission.
+
+            Paper Title: "${newPaper.title}"
+            Submitted By: ${req.user.firstName} ${req.user.lastName}
             
-            An account has been created for you on our conference portal because you were listed as a corresponding author for the paper:
-            "${newPaper.title}" (ID: ${newPaper.id})
-            
-            You can log in to view the paper's status using these credentials:
-            
-            Email: ${author.email}
-            Password: ${tempPassword}
-            URL: ${dashboardUrl}
-            
-            Please change your password after your first login.
-            
+            No action is required from you.
+
             Best regards,
             Conference Admin Team
-          `;
-          sendEmail({
-            to: author.email,
-            subject: mailSubject,
-            text: mailText,
-          }).catch(console.error);
-        } catch (createUserError) {
-          console.error(
-            `Failed to create user account for ${author.email}:`,
-            createUserError
-          );
-        }
-      } else {
-        // --- User ALREADY exists: Send a simple notification ---
-        const mailSubject = "You are listed as a Corresponding Author";
-        const mailText = `
-          Hello ${author.salutation || ""} ${author.name},
-          
-          You have been listed as a corresponding author for a new paper submission:
-          "${newPaper.title}" (ID: ${newPaper.id})
-          
-          This paper has been added to your dashboard. You can log in to your existing account to view it:
-          URL: ${dashboardUrl}
-          
-          Best regards,
-          Conference Admin Team
-        `;
-        sendEmail({
-          to: author.email,
-          subject: mailSubject,
-          text: mailText,
+          `,
         }).catch(console.error);
       }
     }
+    // for (const author of correspondingAuthors) {
+    //   // if (author.email === req.user.email) {
+    //   //   continue;
+    //   // }
+
+    //   const existingUser = await prisma.user.findUnique({
+    //     where: { email: author.email },
+    //   });
+
+    //   if (!existingUser) {
+    //     const tempPassword = Math.random().toString(36).slice(-8);
+    //     const salt = await bcrypt.genSalt(10);
+    //     const hashedPassword = await bcrypt.hash(tempPassword, salt);
+
+    //     const nameParts = author.name.split(" ");
+    //     const firstName = nameParts[0];
+    //     const lastName =
+    //       nameParts.length > 1 ? nameParts.slice(1).join(" ") : "(No Last Name)";
+
+    //     try {
+    //       await prisma.user.create({
+    //         data: {
+    //           firstName,
+    //           lastName,
+    //           email: author.email,
+    //           affiliation: author.institute,
+    //           password: hashedPassword,
+    //           role: "AUTHOR",
+    //         },
+    //       });
+
+    //       // Send "Welcome" email with credentials
+    //       const mailSubject = "Your Account for the Conference Portal";
+    //       const mailText = `
+    //         Hello ${author.salutation || ""} ${author.name},
+
+    //         An account has been created for you on our conference portal because you were listed as a corresponding author for the paper:
+    //         "${newPaper.title}" (ID: ${newPaper.id})
+
+    //         You can log in to view the paper's status using these credentials:
+
+    //         Email: ${author.email}
+    //         Password: ${tempPassword}
+    //         URL: ${dashboardUrl}
+
+    //         Please change your password after your first login.
+
+    //         Best regards,
+    //         Conference Admin Team
+    //       `;
+    //       sendEmail({
+    //         to: author.email,
+    //         subject: mailSubject,
+    //         text: mailText,
+    //       }).catch(console.error);
+    //     } catch (createUserError) {
+    //       console.error(
+    //         `Failed to create user account for ${author.email}:`,
+    //         createUserError
+    //       );
+    //     }
+    //   } else {
+    //     // --- User ALREADY exists: Send a simple notification ---
+    //     const mailSubject = "You are listed as a Corresponding Author";
+    //     const mailText = `
+    //       Hello ${author.salutation || ""} ${author.name},
+
+    //       You have been listed as a corresponding author for a new paper submission:
+    //       "${newPaper.title}" (ID: ${newPaper.id})
+
+    //       This paper has been added to your dashboard. You can log in to your existing account to view it:
+    //       URL: ${dashboardUrl}
+
+    //       Best regards,
+    //       Conference Admin Team
+    //     `;
+    //     sendEmail({
+    //       to: author.email,
+    //       subject: mailSubject,
+    //       text: mailText,
+    //     }).catch(console.error);
+    //   }
+    // }
 
     // --- Notify all Admins about the new submission ---
     try {
@@ -224,9 +367,7 @@ export const submitPaper = async (req, res) => {
     }
 
     // Send the *original* error message to the client
-    res
-      .status(500)
-      .json({ message: "Server error", details: error.message });
+    res.status(500).json({ message: "Server error", details: error.message });
   }
 };
 /**
@@ -370,11 +511,9 @@ export const submitFeedback = async (req, res) => {
     });
 
     if (!paper) {
-      return res
-        .status(403)
-        .json({
-          message: "You do not have permission to comment on this paper.",
-        });
+      return res.status(403).json({
+        message: "You do not have permission to comment on this paper.",
+      });
     }
 
     // 2. Create the feedback message
@@ -583,7 +722,9 @@ export const uploadCameraReady = async (req, res) => {
 
     if (!paper) {
       // Delete the uploaded file immediately if permission fails
-      await cloudinary.uploader.destroy(req.file.filename, { resource_type: "raw" });
+      await cloudinary.uploader.destroy(req.file.filename, {
+        resource_type: "raw",
+      });
       return res.status(404).json({
         message: "Paper not found or you are not the primary author.",
       });
@@ -591,9 +732,12 @@ export const uploadCameraReady = async (req, res) => {
 
     // 2. CRITICAL: Ensure paper is actually ACCEPTED
     if (paper.status !== "ACCEPTED") {
-      await cloudinary.uploader.destroy(req.file.filename, { resource_type: "raw" });
+      await cloudinary.uploader.destroy(req.file.filename, {
+        resource_type: "raw",
+      });
       return res.status(400).json({
-        message: "You can only submit a Camera Ready version for ACCEPTED papers.",
+        message:
+          "You can only submit a Camera Ready version for ACCEPTED papers.",
       });
     }
 
@@ -615,10 +759,13 @@ export const uploadCameraReady = async (req, res) => {
           .slice(urlParts.indexOf("conference_papers"))
           .join("/")
           .split(".")[0];
-        
+
         await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
       } catch (cloudinaryError) {
-        console.warn("Could not delete old Camera Ready file:", cloudinaryError.message);
+        console.warn(
+          "Could not delete old Camera Ready file:",
+          cloudinaryError.message
+        );
       }
     }
 
@@ -645,7 +792,6 @@ export const uploadCameraReady = async (req, res) => {
       message: "Camera Ready paper uploaded successfully",
       paper: updatedPaper,
     });
-
   } catch (error) {
     console.error("Error uploading camera ready paper:", error);
     res.status(500).json({ message: "Server error" });
