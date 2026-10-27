@@ -61,9 +61,23 @@ model Paper {
 
   // relations
   authors       Author[] // <-- Renamed from coAuthors
+  versions      PaperVersion[]
   reviews       Review[]
   feedbacks     Feedback[]
   assignments   ReviewerAssignment[]
+}
+
+model PaperVersion {
+  id            Int      @id @default(autoincrement())
+  paperId       Int
+  versionNumber Int
+  fileUrl       String
+  submittedAt   DateTime @default(now())
+
+  paper         Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, versionNumber])
+  @@index([paperId])
 }
 
 enum PaperStatus {

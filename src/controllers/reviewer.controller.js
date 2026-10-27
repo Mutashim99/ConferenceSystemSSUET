@@ -84,6 +84,11 @@ export const getAssignedPaperById = async (req, res) => {
           },
         },
         authors: true, // <-- CHANGED: from coAuthors
+        versions: {
+          orderBy: {
+            versionNumber: "desc",
+          },
+        },
         // Get all reviews, but hide who wrote them (blind review)
         reviews: {
           select: {

@@ -55,6 +55,13 @@ export const submitPaper = async (req, res) => {
               })),
             }
           : undefined,
+        versions: {
+          create: {
+            versionNumber: 1,
+            fileUrl: req.file.path,
+            submittedAt: new Date(),
+          },
+        },
       },
       include: {
         authors: true, // Need this for the email logic
@@ -395,6 +402,11 @@ export const getSubmittedPapers = async (req, res) => {
       },
       include: {
         authors: true,
+        versions: {
+          orderBy: {
+            versionNumber: "desc",
+          },
+        },
         _count: {
           select: { reviews: true },
         },
@@ -438,6 +450,11 @@ export const getAuthorPaperById = async (req, res) => {
       },
       include: {
         authors: true,
+        versions: {
+          orderBy: {
+            versionNumber: "desc",
+          },
+        },
         reviews: {
           select: {
             id: true,
@@ -571,36 +588,38 @@ export const resubmitPaper = async (req, res) => {
       });
     }
 
-    const oldFileUrl = paper.fileUrl;
+    const updatedPaper = await prisma.$transaction(async (transaction) => {
+      const latestVersion = await transaction.paperVersion.findFirst({
+        where: { paperId: paper.id },
+        orderBy: { versionNumber: "desc" },
+        select: { versionNumber: true },
+      });
+      const nextVersionNumber = (latestVersion?.versionNumber || 0) + 1;
 
-    const updatedPaper = await prisma.paper.update({
-      where: {
-        id: parseInt(paperId),
-      },
-      data: {
-        fileUrl: req.file.path,
-        status: "RESUBMITTED",
-      },
+      return transaction.paper.update({
+        where: { id: paper.id },
+        data: {
+          fileUrl: req.file.path,
+          status: "RESUBMITTED",
+          versions: {
+            create: {
+              versionNumber: nextVersionNumber,
+              fileUrl: req.file.path,
+              submittedAt: new Date(),
+            },
+          },
+        },
+        include: {
+          versions: {
+            orderBy: {
+              versionNumber: "desc",
+            },
+          },
+        },
+      });
     });
 
-    // 5. Delete the *old* file from Cloudinary
-    if (oldFileUrl) {
-      try {
-        const urlParts = oldFileUrl.split("/");
-        const publicId = urlParts
-          .slice(urlParts.indexOf("conference_papers"))
-          .join("/")
-          .split(".")[0];
-        await cloudinary.uploader.destroy(publicId, { resource_type: "raw" });
-      } catch (cloudinaryError) {
-        console.warn(
-          "Could not delete old file from Cloudinary:",
-          cloudinaryError.message
-        );
-      }
-    }
-
-    // <-- FIX: Notify all Admins about the resubmission -->
+    // Notify all Admins about the resubmission.
     try {
       const submitter = await prisma.user.findUnique({
         where: { id: authorId },

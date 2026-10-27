@@ -140,6 +140,11 @@ export const getPaperById = async (req, res) => {
           },
         },
         authors: true, // Updated from coAuthors
+        versions: {
+          orderBy: {
+            versionNumber: "desc",
+          },
+        },
         // Include reviews and the reviewer's info
         reviews: {
           include: {
